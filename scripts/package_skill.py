@@ -25,7 +25,10 @@ DEFAULT_EXCLUDES = {
     "dashboard.html", "history.json", "summary.md", "junit.xml", "sarif.json", "matrix-plan.json",
     "matrix-summary.md", "visual-metrics.json", "*-report",
 }
-DEFAULT_INCLUDES = {"SKILL.md", "requirements.txt", "agents", "assets", "references", "scenarios", "schemas", "scripts"}
+DEFAULT_INCLUDES = {
+    "SKILL.md", "LICENSE", "requirements.txt",
+    "agents", "assets", "references", "scenarios", "schemas", "scripts",
+}
 
 
 def _matches(name, patterns):

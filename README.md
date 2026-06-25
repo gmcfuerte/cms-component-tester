@@ -8,6 +8,7 @@ Project docs:
 
 - [Project presentation](docs/project-presentation.md)
 - [How to use the skill](docs/usage.md)
+- [Agent compatibility](docs/agent-compatibility.md)
 
 | Layer | What it checks | Needs a site? |
 |---|---|---|
@@ -120,6 +121,8 @@ layer SKIP gracefully — they never crash the run.
 ```
 cms-component-tester/
 ├── SKILL.md                  # the skill (triggering + workflow + safety)
+├── AGENTS.md                 # generic coding-agent instructions
+├── CLAUDE.md                 # Claude / Claude Code instructions
 ├── README.md
 ├── docs/
 │   ├── project-presentation.md

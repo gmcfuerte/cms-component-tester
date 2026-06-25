@@ -538,6 +538,7 @@ $api_key = 'sk-abcdefghijklmnopqrstuvwxyz';
     def test_package_skill_dry_file_set_excludes_artifacts(self):
         files = package_skill.list_package_files(ROOT, include_tests=True)
         self.assertIn("SKILL.md", files)
+        self.assertIn("LICENSE", files)
         self.assertIn("assets/github-actions/cms-component-tester.yml", files)
         self.assertIn("schemas/api-spec.schema.json", files)
         self.assertIn("references/swarm-testing.md", files)
