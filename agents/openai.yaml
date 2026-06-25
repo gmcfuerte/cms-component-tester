@@ -1,0 +1,4 @@
+interface:
+  display_name: "CMS Component Tester"
+  short_description: "Ultra-review CMS extensions with CI and swarm handoffs"
+  default_prompt: "Use $cms-component-tester to ultra-review this Joomla/YOOtheme or WordPress extension end to end with security, visual QA, CI artifacts, and compact handoffs."

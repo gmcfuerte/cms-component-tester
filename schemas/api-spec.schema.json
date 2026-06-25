@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/cms-component-tester/api-spec.schema.json",
+  "title": "cms-component-tester API spec",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "platform": { "enum": ["joomla", "wordpress", "unknown"] },
+    "base_url": { "type": "string" },
+    "env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" } },
+    "secret_env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" } },
+    "defaults": { "type": "object" },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "header": { "type": "string" },
+        "scheme": { "type": "string" }
+      }
+    },
+    "default_headers": { "type": "object", "additionalProperties": { "type": "string" } },
+    "requests": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/request" }
+    },
+    "endpoints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/request" }
+    }
+  },
+  "anyOf": [
+    { "required": ["requests"] },
+    { "required": ["endpoints"] }
+  ],
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path"],
+      "properties": {
+        "name": { "type": "string" },
+        "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
+        "path": { "type": "string" },
+        "url": { "type": "string" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "auth": { "type": "boolean" },
+        "timeout": { "type": "number", "exclusiveMinimum": 0 },
+        "json": {},
+        "form": { "type": "object" },
+        "data": {},
+        "expect": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "max_latency_ms": { "type": "number", "exclusiveMinimum": 0 },
+            "json_has": {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" } }
+              ]
+            },
+            "json_types": { "type": "object", "additionalProperties": { "enum": ["string", "number", "integer", "boolean", "array", "object", "null"] } },
+            "body_contains": { "type": "string" },
+            "body_matches": { "type": "string" },
+            "success_flag": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+# cms-component-tester — OPTIONAL dependencies.
+# The detect / integrity / api / orchestrator layers run on the Python 3.8+
+# standard library alone. Install these only for the features you need.
+
+# YAML scenario / api-spec files (JSON works without this):
+pyyaml>=5.4
+
+# Human-emulation layer (also run: `playwright install chromium`):
+playwright>=1.40
+
+# Selenium fallback for the human layer (alternative to Playwright):
+# selenium>=4.10

@@ -1,0 +1,37 @@
+{
+  "platform": "joomla",
+  "env": ["YOOTHEME_TEMPLATE", "YOOTHEME_MODULE_ID"],
+  "auth": {
+    "header": "X-Joomla-Token",
+    "scheme": ""
+  },
+  "default_headers": {
+    "Accept": "application/json"
+  },
+  "requests": [
+    {
+      "name": "yootheme-template-ajax",
+      "method": "GET",
+      "path": "/index.php?option=com_ajax&template=${YOOTHEME_TEMPLATE}&format=json",
+      "auth": false,
+      "expect": {
+        "status": 200,
+        "success_flag": true,
+        "max_latency_ms": 3000,
+        "json_has": ["data"]
+      }
+    },
+    {
+      "name": "yootheme-module-render-smoke",
+      "method": "GET",
+      "path": "/index.php?option=com_ajax&module=${YOOTHEME_MODULE_ID}&format=json",
+      "auth": false,
+      "expect": {
+        "status": 200,
+        "success_flag": true,
+        "max_latency_ms": 3000,
+        "json_has": ["data"]
+      }
+    }
+  ]
+}

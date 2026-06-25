@@ -1,0 +1,101 @@
+# Joomla admin CRUD + frontend + chatbot human-emulation scenario.
+#
+# Adapt the component option (com_content here) and field selectors to YOUR
+# extension. Placeholders are filled from the environment:
+#   ${BASE_URL}    -> --base-url (a staging/local site, never production)
+#   ${ADMIN_USER}  -> CMS_ADMIN_USER
+#   ${ADMIN_PASS}  -> CMS_ADMIN_PASS   (secret; never logged or screenshotted)
+#
+# Selectors below are verified against Joomla 4/5 (Atum admin template).
+name: joomla-admin-crud
+platform: joomla
+description: Log into /administrator, open and save a record, verify the system message, then test the frontend.
+requires_auth: true
+continue_on_failure: false
+save_storage_state: ""          # set a path to reuse the login across runs
+
+steps:
+  - action: goto
+    url: "${BASE_URL}/administrator/index.php"
+    name: 01-login-page
+
+  - action: fill
+    selector: "#mod-login-username"          # input[name=username]
+    value: "${ADMIN_USER}"
+
+  - action: fill
+    selector: "#mod-login-password"          # input[name=passwd]
+    value: "${ADMIN_PASS}"
+    secret: true
+
+  # The random-named CSRF token (value="1") is already in #form-login;
+  # submitting the form carries it automatically - never hardcode it.
+  - action: click
+    selector: "#btn-login-submit"
+    name: 02-submit-login
+
+  - action: expect_url
+    pattern: "/administrator/index\\.php"
+
+  - action: expect_selector
+    selector: ".header-title, #sidebarmenu, .page-title"
+    name: 03-dashboard
+
+  # Navigate to a component list view (change com_content to your component).
+  - action: goto
+    url: "${BASE_URL}/administrator/index.php?option=com_content&view=articles"
+    name: 04-list-view
+
+  # Open an existing record in edit mode.
+  - action: goto
+    url: "${BASE_URL}/administrator/index.php?option=com_content&task=article.edit&id=1"
+
+  # Joomla web components hydrate the inner <button>; wait for it.
+  - action: expect_selector
+    selector: "joomla-toolbar-button#toolbar-save button"
+    name: 05-edit-form
+
+  - action: fill
+    selector: "#jform_title"
+    value: "QA smoke edit"
+    optional: true
+
+  # "Apply" saves but stays in the edit screen (use Save to close to the list).
+  - action: click
+    selector: "joomla-toolbar-button#toolbar-apply button"
+    name: 06-apply
+
+  - action: expect_selector
+    selector: "#system-message-container .alert-success, #system-message-container joomla-alert[type='success']"
+    name: 07-save-message
+
+  # Always Close to release the edit checkout lock.
+  - action: click
+    selector: "joomla-toolbar-button#toolbar-cancel button"
+    name: 08-close
+    optional: true
+
+  # --- Frontend + chatbot/widget ---
+  - action: goto
+    url: "${BASE_URL}/index.php?option=com_content&view=article&id=1"
+    name: 09-frontend
+
+  - action: expect_selector
+    selector: "body"
+
+  # If the component renders a chatbot/widget on the frontend, drive it here.
+  - action: fill
+    selector: "input.chatbot-input, textarea.chatbot-input, #vokira-chat-input"
+    value: "Hello"
+    optional: true
+
+  - action: click
+    selector: "button.chatbot-send, #vokira-chat-send"
+    optional: true
+    name: 10-chatbot-send
+
+  - action: expect_text_regex
+    selector: ".chatbot-messages, .vokira-chat-log"
+    pattern: "\\S"
+    optional: true
+    name: 11-chatbot-reply

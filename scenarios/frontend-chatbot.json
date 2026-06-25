@@ -1,0 +1,20 @@
+{
+  "name": "frontend-chatbot",
+  "platform": "wordpress",
+  "description": "Anonymous visitor opens a page with the chatbot widget, sends a message, and verifies a reply. JSON format works with zero dependencies (no PyYAML needed).",
+  "requires_auth": false,
+  "continue_on_failure": true,
+  "steps": [
+    { "action": "goto", "url": "${BASE_URL}/?page_id=2", "name": "01-open-page" },
+    { "action": "expect_selector", "selector": "body", "name": "02-loaded" },
+    { "action": "fill", "selector": "input.chatbot-input, #vokira-chat-input", "value": "What are your opening hours?", "name": "03-type" },
+    { "action": "click", "selector": "button.chatbot-send, #vokira-chat-send", "name": "04-send" },
+    { "action": "wait_for", "ms": 1500 },
+    {
+      "action": "expect_text_regex",
+      "selector": ".chatbot-messages .bot, .chatbot-messages .assistant, .vokira-chat-log .bot, .vokira-chat-log .assistant, [data-role='assistant']",
+      "pattern": "\\S",
+      "name": "05-reply"
+    }
+  ]
+}

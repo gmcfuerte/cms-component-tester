@@ -1,0 +1,39 @@
+# Test output
+cms-test-report/
+*-report/
+report.md
+report.json
+report.brief.md
+report.handoff.json
+report.html
+dashboard.html
+summary.md
+history.json
+junit.xml
+sarif.json
+matrix-plan.json
+matrix-summary.md
+visual-metrics.json
+dist/
+build/
+
+# Browser / test state
+*state.json
+trace.zip
+screenshots/
+steps/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Local secrets — never commit
+.env
+*.local.env
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,56 @@
+name: CMS component tester
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  static-gate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.1", "8.2", "8.3", "8.4"]
+    steps:
+      - name: Checkout repository under test
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer
+
+      - name: Checkout cms-component-tester skill
+        uses: actions/checkout@v4
+        with:
+          repository: your-org/cms-component-tester
+          path: .cms-component-tester
+
+      - name: Run static CMS QA
+        run: |
+          python .cms-component-tester/scripts/cmsct.py run "$GITHUB_WORKSPACE" \
+            --profile static \
+            --out-dir cms-test-report \
+            --swarm \
+            --max-agents 6
+
+      - name: Add QA summary
+        if: always()
+        run: |
+          if [ -f cms-test-report/summary.md ]; then
+            cat cms-test-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cms-test-report-php-${{ matrix.php }}
+          path: cms-test-report
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cms-test-report/sarif.json

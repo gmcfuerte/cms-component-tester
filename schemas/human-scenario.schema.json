@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/cms-component-tester/human-scenario.schema.json",
+  "title": "cms-component-tester human scenario",
+  "oneOf": [
+    { "$ref": "#/$defs/scenario" },
+    { "type": "array", "items": { "$ref": "#/$defs/scenario" } },
+    {
+      "type": "object",
+      "required": ["scenarios"],
+      "properties": {
+        "scenarios": { "type": "array", "items": { "$ref": "#/$defs/scenario" } }
+      }
+    }
+  ],
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "platform": { "enum": ["joomla", "wordpress", "unknown"] },
+        "description": { "type": "string" },
+        "requires_auth": { "type": "boolean" },
+        "continue_on_failure": { "type": "boolean" },
+        "storage_state": { "type": "string" },
+        "save_storage_state": { "type": "string" },
+        "env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" } },
+        "secret_env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" } },
+        "viewport": {
+          "type": "object",
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          },
+          "required": ["width", "height"]
+        },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["action"],
+      "additionalProperties": true,
+      "properties": {
+        "action": {
+          "enum": ["goto", "fill", "type", "click", "press", "select", "select_option", "check", "uncheck", "wait_for", "expect_visible", "expect_selector", "expect_text", "expect_text_regex", "expect_regex", "expect_nonempty_text", "expect_not_text", "expect_url", "screenshot", "upload"]
+        },
+        "selector": { "type": "string" },
+        "frame_selector": { "type": "string" },
+        "url": { "type": "string" },
+        "value": { "type": "string" },
+        "text": { "type": "string" },
+        "pattern": { "type": "string" },
+        "path": { "type": "string" },
+        "name": { "type": "string" },
+        "state": { "type": "string" },
+        "ms": { "type": "integer", "minimum": 1 },
+        "min_length": { "type": "integer", "minimum": 1 },
+        "optional": { "type": "boolean" },
+        "secret": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

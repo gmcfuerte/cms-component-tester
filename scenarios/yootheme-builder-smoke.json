@@ -1,0 +1,67 @@
+{
+  "name": "yootheme-builder-smoke",
+  "platform": "joomla",
+  "description": "Log into Joomla admin, inspect YOOtheme Pro/template style access, then verify frontend rendering.",
+  "requires_auth": true,
+  "continue_on_failure": false,
+  "steps": [
+    {
+      "action": "goto",
+      "url": "${BASE_URL}/administrator/index.php",
+      "name": "01-login-page"
+    },
+    {
+      "action": "fill",
+      "selector": "#mod-login-username",
+      "value": "${ADMIN_USER}"
+    },
+    {
+      "action": "fill",
+      "selector": "#mod-login-password",
+      "value": "${ADMIN_PASS}",
+      "secret": true
+    },
+    {
+      "action": "click",
+      "selector": "#btn-login-submit",
+      "name": "02-submit-login"
+    },
+    {
+      "action": "expect_selector",
+      "selector": ".header-title, #sidebarmenu, .page-title",
+      "name": "03-dashboard"
+    },
+    {
+      "action": "goto",
+      "url": "${BASE_URL}/administrator/index.php?option=com_templates&view=styles",
+      "name": "04-template-styles"
+    },
+    {
+      "action": "expect_text_regex",
+      "selector": "body",
+      "pattern": "(?i)(yootheme|template|style|styles)",
+      "name": "05-styles-visible"
+    },
+    {
+      "action": "click",
+      "selector": "a[href*='yootheme'], a[href*='customizer'], .btn:has-text('YOOtheme')",
+      "optional": true,
+      "name": "06-open-yootheme"
+    },
+    {
+      "action": "expect_selector",
+      "selector": "body",
+      "name": "07-builder-shell"
+    },
+    {
+      "action": "goto",
+      "url": "${BASE_URL}/?cmsct_nocache=1",
+      "name": "08-frontend"
+    },
+    {
+      "action": "expect_selector",
+      "selector": "body",
+      "name": "09-frontend-body"
+    }
+  ]
+}

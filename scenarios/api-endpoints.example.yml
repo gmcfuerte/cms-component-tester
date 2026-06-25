@@ -1,0 +1,70 @@
+# Example --api-spec file for the api layer.
+#
+# Auth tokens are NEVER written here. The layer reads CMS_API_TOKEN from the
+# environment and injects it into the configured header. Point base_url at a
+# staging instance.
+#
+# Joomla Web Services use   X-Joomla-Token: <token>
+# WordPress REST commonly    Authorization: Bearer <token>  (or Basic app-pw)
+# Per-request `auth: false`  sends the request unauthenticated.
+
+auth:
+  header: "X-Joomla-Token"      # omit to auto-pick per platform
+  scheme: ""                    # prefix before the token (e.g. "Bearer ")
+
+default_headers:
+  Accept: "application/json"
+
+requests:
+  # --- Joomla Web Services (JSON:API) ---
+  - name: joomla-articles-list
+    method: GET
+    path: "/api/index.php/v1/content/articles?page[limit]=1"
+    headers:
+      Accept: "application/vnd.api+json"
+    expect:
+      status: 200
+      max_latency_ms: 2000
+      json_has: ["data"]
+      json_types:
+        data: array
+
+  # --- Joomla com_ajax chatbot (HTTP 200 even on failure; check success flag) ---
+  - name: joomla-chatbot
+    method: POST
+    path: "/index.php?option=com_ajax&plugin=chatbot&format=json"
+    form:
+      message: "Hello"
+    auth: false
+    expect:
+      status: 200
+      max_latency_ms: 4000
+      success_flag: true
+      json_has: ["data"]
+
+  # --- WordPress REST chatbot endpoint ---
+  - name: wp-rest-chat
+    method: POST
+    path: "/wp-json/vokira/v1/chat"
+    json:
+      message: "Hello"
+    auth: false
+    expect:
+      status: 200
+      max_latency_ms: 4000
+      json_has: ["reply"]
+      json_types:
+        reply: string
+
+  # --- WordPress admin-ajax (envelope {success, data}) ---
+  - name: wp-admin-ajax-chat
+    method: POST
+    path: "/wp-admin/admin-ajax.php"
+    form:
+      action: "vokira_chat"
+      message: "Hello"
+    auth: false
+    expect:
+      status: 200
+      success_flag: true
+      json_has: ["data"]

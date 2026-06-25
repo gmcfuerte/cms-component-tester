@@ -1,0 +1,39 @@
+name: Self test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install optional validation dependencies
+        run: python -m pip install --upgrade pip pyyaml
+
+      - name: Run self-test
+        run: python scripts/cmsct.py self-test --out-dir cms-test-report/self-test --json
+
+      - name: Add summary
+        if: always()
+        run: |
+          if [ -f cms-test-report/self-test/self-test-report.md ]; then
+            cat cms-test-report/self-test/self-test-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cms-component-tester-self-test
+          path: cms-test-report

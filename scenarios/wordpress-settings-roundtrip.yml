@@ -1,0 +1,99 @@
+# WordPress admin human-emulation scenario:
+# login -> activate plugin -> open settings -> save options -> verify notice ->
+# test a shortcode/block on the frontend -> interact with an AI widget.
+#
+# Placeholders come from the environment (BASE_URL, ADMIN_USER, ADMIN_PASS).
+# Selectors are verified against current WordPress core (wp-login, plugins.php,
+# Settings API). Change the plugin slug and option field ids to YOUR plugin.
+name: wordpress-settings-roundtrip
+platform: wordpress
+description: Log into wp-admin, activate the plugin, save its settings, verify the success notice, then test the shortcode and AI widget on the frontend.
+requires_auth: true
+continue_on_failure: false
+
+steps:
+  - action: goto
+    url: "${BASE_URL}/wp-login.php"
+    name: 01-login-page
+
+  - action: fill
+    selector: "#user_login"                  # name=log
+    value: "${ADMIN_USER}"
+
+  - action: fill
+    selector: "#user_pass"                   # name=pwd
+    value: "${ADMIN_PASS}"
+    secret: true
+
+  - action: click
+    selector: "#wp-submit"                   # test cookie handled by the browser
+    name: 02-submit-login
+
+  - action: expect_url
+    pattern: "/wp-admin/"
+
+  - action: expect_selector
+    selector: "#wpadminbar"
+    name: 03-dashboard
+
+  # Activate the plugin by clicking the DOM link, which already carries the
+  # live, time-limited &_wpnonce. Never construct the nonce yourself.
+  - action: goto
+    url: "${BASE_URL}/wp-admin/plugins.php"
+    name: 04-plugins
+
+  - action: click
+    selector: "tr[data-plugin='my-plugin/my-plugin.php'] .activate a"
+    optional: true                           # already active -> no .activate link
+    name: 05-activate
+
+  # Open the plugin settings page (Settings API).
+  - action: goto
+    url: "${BASE_URL}/wp-admin/options-general.php?page=my-plugin"
+    name: 06-settings
+
+  - action: fill
+    selector: "#my_option_field"
+    value: "QA value"
+    optional: true
+
+  - action: click
+    selector: "#submit"                      # input[name=submit].button-primary -> options.php
+    name: 07-save
+
+  - action: expect_url
+    pattern: "settings-updated=true"
+    optional: true
+
+  - action: expect_selector
+    selector: "#setting-error-settings_updated, .notice-success"
+    name: 08-saved-notice
+
+  # --- Frontend shortcode / block ---
+  # Use a draft preview or a dedicated test page, not the live published one,
+  # and bypass page caching when verifying.
+  - action: goto
+    url: "${BASE_URL}/?page_id=2&preview=true"
+    name: 09-frontend
+
+  - action: expect_selector
+    selector: ".my-shortcode-output, .wp-block-my-plugin"
+    optional: true
+    name: 10-shortcode
+
+  # --- AI widget / chatbot ---
+  - action: fill
+    selector: "input.chatbot-input, #vokira-chat-input"
+    value: "Hi there"
+    optional: true
+
+  - action: click
+    selector: "button.chatbot-send, #vokira-chat-send"
+    optional: true
+    name: 11-widget-send
+
+  - action: expect_text_regex
+    selector: ".chatbot-messages, .vokira-chat-log"
+    pattern: "\\S"
+    optional: true
+    name: 12-widget-reply
