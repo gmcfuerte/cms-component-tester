@@ -260,6 +260,124 @@ $api_key = 'sk-abcdefghijklmnopqrstuvwxyz';
             self.assertEqual(checks["header.text_domain"]["status"], cc.FAIL)
             self.assertEqual(checks["readme.stable_tag"]["status"], cc.FAIL)
 
+    def test_integrity_flags_joomla_plugin_update_feed_missing_client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(os.path.join(tmp, "acme.xml"), """<?xml version="1.0"?>
+<extension type="plugin" group="system" method="upgrade">
+  <name>plg_system_acme</name>
+  <version>1.0.0</version>
+  <files>
+    <filename plugin="acme">acme.php</filename>
+  </files>
+  <updateservers>
+    <server type="extension" name="Acme">https://example.test/acme.xml</server>
+  </updateservers>
+</extension>
+""")
+            write(os.path.join(tmp, "acme.php"), "<?php defined('_JEXEC') or die;\n")
+            feed = """<?xml version="1.0"?>
+<updates><update>
+  <name>Acme</name>
+  <element>acme</element>
+  <type>plugin</type>
+  <folder>system</folder>
+  <version>1.1.0</version>
+  <downloads><downloadurl type="full" format="zip">https://example.test/acme.zip</downloadurl></downloads>
+</update></updates>
+"""
+            desc = dt.detect(tmp)
+            with mock.patch.object(layer_integrity, "_http_get_text", return_value={"ok": True, "status": 200, "body": feed, "error": ""}), \
+                    mock.patch.object(layer_integrity, "_http_probe", return_value={"ok": True, "status": 200, "error": ""}):
+                result = layer_integrity.run({
+                    "target": desc,
+                    "target_path": tmp,
+                    "base_url": None,
+                    "allow_install": False,
+                    "allow_production": False,
+                    "timeout": 30,
+                })
+
+            checks = {c["name"]: c for c in result["checks"]}
+            self.assertEqual(checks["updateserver.1.identity.client"]["status"], cc.FAIL)
+
+    def test_integrity_flags_joomla_update_feed_direct_zip_forbidden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(os.path.join(tmp, "pkg_acme.xml"), """<?xml version="1.0"?>
+<extension type="package" method="upgrade">
+  <name>pkg_acme</name>
+  <version>1.0.0</version>
+  <files>
+    <file type="component" id="com_acme">com_acme.zip</file>
+  </files>
+  <updateservers>
+    <server type="extension" name="Acme">https://example.test/pkg_acme.xml</server>
+  </updateservers>
+</extension>
+""")
+            write(os.path.join(tmp, "com_acme.zip"), "placeholder\n")
+            feed = """<?xml version="1.0"?>
+<updates><update>
+  <name>Acme</name>
+  <element>pkg_acme</element>
+  <type>package</type>
+  <version>1.1.0</version>
+  <downloads><downloadurl type="full" format="zip">https://example.test/pkg_acme-1.1.0.zip</downloadurl></downloads>
+</update></updates>
+"""
+            desc = dt.detect(tmp)
+            with mock.patch.object(layer_integrity, "_http_get_text", return_value={"ok": True, "status": 200, "body": feed, "error": ""}), \
+                    mock.patch.object(layer_integrity, "_http_probe", return_value={"ok": False, "status": 403, "error": "forbidden"}):
+                result = layer_integrity.run({
+                    "target": desc,
+                    "target_path": tmp,
+                    "base_url": None,
+                    "allow_install": False,
+                    "allow_production": False,
+                    "timeout": 30,
+                })
+
+            checks = {c["name"]: c for c in result["checks"]}
+            self.assertEqual(checks["updateserver.1.download"]["status"], cc.FAIL)
+
+    def test_integrity_flags_joomla_update_feed_stale_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(os.path.join(tmp, "pkg_acme.xml"), """<?xml version="1.0"?>
+<extension type="package" method="upgrade">
+  <name>pkg_acme</name>
+  <version>1.0.2</version>
+  <files>
+    <file type="component" id="com_acme">com_acme.zip</file>
+  </files>
+  <updateservers>
+    <server type="extension" name="Acme">https://example.test/pkg_acme.xml</server>
+  </updateservers>
+</extension>
+""")
+            write(os.path.join(tmp, "com_acme.zip"), "placeholder\n")
+            feed = """<?xml version="1.0"?>
+<updates><update>
+  <name>Acme</name>
+  <element>pkg_acme</element>
+  <type>package</type>
+  <version>1.0.1</version>
+  <downloads><downloadurl type="full" format="zip">https://example.test/pkg_acme-1.0.1.zip</downloadurl></downloads>
+</update></updates>
+"""
+            desc = dt.detect(tmp)
+            with mock.patch.object(layer_integrity, "_http_get_text", return_value={"ok": True, "status": 200, "body": feed, "error": ""}), \
+                    mock.patch.object(layer_integrity, "_http_probe", return_value={"ok": True, "status": 200, "error": ""}):
+                result = layer_integrity.run({
+                    "target": desc,
+                    "target_path": tmp,
+                    "base_url": None,
+                    "allow_install": False,
+                    "allow_production": False,
+                    "timeout": 30,
+                })
+
+            checks = {c["name"]: c for c in result["checks"]}
+            self.assertEqual(checks["updateserver.1.version"]["status"], cc.FAIL)
+
     def test_api_rejects_hardcoded_auth_headers(self):
         with self.assertRaises(cc.GuardError):
             layer_api._build_request(

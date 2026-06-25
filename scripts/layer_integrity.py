@@ -21,6 +21,10 @@ import argparse
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,6 +37,7 @@ import detect_target as dt       # noqa: E402
 LAYER = "integrity"
 _CODE_EXT = (".php", ".js", ".css", ".xml", ".ini", ".sql", ".html", ".tpl")
 _IGNORE = {"index.html", ".gitignore", ".ds_store", "thumbs.db"}
+_HTTP_UA = "cms-component-tester/1.0"
 
 
 def _norm_rel(path):
@@ -101,6 +106,318 @@ def _has_wp_uninstall_guard(text):
         "WP_UNINSTALL_PLUGIN" in code
         and re.search(r"\b(defined|constant)\s*\(\s*['\"]WP_UNINSTALL_PLUGIN['\"]", code) is not None
     )
+
+
+def _xml_local(tag):
+    """Return an XML tag name without a namespace."""
+    return str(tag or "").rsplit("}", 1)[-1]
+
+
+def _xml_child_text(node, name):
+    if node is None:
+        return ""
+    for child in list(node):
+        if _xml_local(child.tag) == name:
+            return (child.text or "").strip()
+    return ""
+
+
+def _xml_children(node, name):
+    if node is None:
+        return []
+    return [child for child in list(node) if _xml_local(child.tag) == name]
+
+
+def _http_get_text(url, timeout=10, cap=250000):
+    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            raw = res.read(cap + 1)
+            body = raw[:cap].decode("utf-8", "replace")
+            return {"ok": 200 <= res.status < 300, "status": res.status, "body": body, "error": ""}
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read(min(cap, 4096)).decode("utf-8", "replace")
+        except Exception:
+            body = ""
+        return {"ok": False, "status": exc.code, "body": body, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "status": None, "body": "", "error": str(exc)}
+
+
+def _http_probe(url, timeout=10):
+    headers = {"User-Agent": _HTTP_UA}
+    for method, extra_headers in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
+        req = urllib.request.Request(url, headers=dict(headers, **extra_headers), method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return {"ok": 200 <= res.status < 300, "status": res.status, "error": ""}
+        except urllib.error.HTTPError as exc:
+            # Some servers reject HEAD for files but allow GET. Retry once with
+            # a byte range before deciding the URL is actually inaccessible.
+            if method == "HEAD" and exc.code in (403, 405, 501):
+                continue
+            return {"ok": False, "status": exc.code, "error": str(exc)}
+        except Exception as exc:
+            if method == "HEAD":
+                continue
+            return {"ok": False, "status": None, "error": str(exc)}
+    return {"ok": False, "status": None, "error": "probe failed"}
+
+
+def _manifest_update_servers(manifest_text):
+    try:
+        root = ET.fromstring(manifest_text or "")
+    except ET.ParseError:
+        return []
+    servers = []
+    for updateservers in root.iter():
+        if _xml_local(updateservers.tag) != "updateservers":
+            continue
+        for server in _xml_children(updateservers, "server"):
+            url = (server.text or "").strip()
+            if url:
+                servers.append({
+                    "type": server.get("type", "extension"),
+                    "name": server.get("name", ""),
+                    "priority": server.get("priority", ""),
+                    "url": url,
+                })
+    return servers
+
+
+def _joomla_manifest_identity(manifest_text, manifest):
+    try:
+        root = ET.fromstring(manifest_text or "")
+    except ET.ParseError:
+        root = None
+    ext_type = (manifest.get("type") or "").strip()
+    name = (manifest.get("name") or "").strip()
+    element = (manifest.get("element") or "").strip()
+    folder = ""
+    client = (manifest.get("client") or "").strip()
+    if root is not None:
+        if ext_type == "plugin":
+            folder = (root.get("group") or "").strip()
+            for filename in root.iter():
+                if _xml_local(filename.tag) == "filename" and filename.get("plugin"):
+                    element = filename.get("plugin", "").strip()
+                    break
+        if not client:
+            client = (root.get("client") or "").strip()
+    if not element:
+        if name.startswith(("com_", "pkg_", "mod_", "plg_")):
+            element = name
+        elif manifest.get("path"):
+            element = os.path.splitext(os.path.basename(manifest["path"]))[0]
+    if ext_type == "plugin" and not client:
+        client = "site"
+    return {"type": ext_type, "element": element, "folder": folder, "client": client}
+
+
+def _is_http_url(url):
+    try:
+        return urlsplit(url).scheme.lower() in ("http", "https")
+    except Exception:
+        return False
+
+
+def _is_direct_zip_url(url):
+    try:
+        return urlsplit(url).path.lower().endswith(".zip")
+    except Exception:
+        return False
+
+
+def _looks_like_license_gateway(url):
+    low = url.lower()
+    return "option=com_gmclicenses" in low and "task=api.download" in low
+
+
+def _version_key(version):
+    parts = re.findall(r"\d+|[A-Za-z]+", str(version or ""))
+    key = []
+    for part in parts:
+        if part.isdigit():
+            key.append((0, int(part)))
+        else:
+            key.append((1, part.lower()))
+    return key
+
+
+def _joomla_update_feed_checks(ctx, manifest, manifest_text):
+    checks = []
+    identity = _joomla_manifest_identity(manifest_text, manifest)
+    servers = _manifest_update_servers(manifest_text)
+    if not servers:
+        checks.append(cc.check(
+            "updateservers.present",
+            cc.WARN,
+            "No <updateservers> declared; Joomla will not discover automatic updates for this extension.",
+        ))
+        return checks
+
+    checks.append(cc.check(
+        "updateservers.present",
+        cc.PASS,
+        "{} Joomla update server(s) declared.".format(len(servers)),
+        evidence=[s["url"] for s in servers[:5]],
+    ))
+
+    timeout = min(int(ctx.get("timeout") or 10), 15)
+    for idx, server in enumerate(servers, start=1):
+        prefix = "updateserver.{}".format(idx)
+        url = server["url"]
+        if not _is_http_url(url):
+            checks.append(cc.check(prefix + ".url", cc.WARN,
+                                   "Update server is not an http(s) URL; remote feed check skipped.",
+                                   evidence=url))
+            continue
+        if server.get("type") not in ("extension", "collection", ""):
+            checks.append(cc.check(prefix + ".type", cc.WARN,
+                                   "Unusual Joomla update server type '{}'.".format(server.get("type")),
+                                   evidence=url))
+
+        feed = _http_get_text(url, timeout=timeout)
+        if not feed["ok"]:
+            detail = "Update feed returned HTTP {}.".format(feed["status"]) if feed["status"] else feed["error"]
+            checks.append(cc.check(prefix + ".fetch", cc.FAIL, detail, evidence=url))
+            continue
+        checks.append(cc.check(prefix + ".fetch", cc.PASS,
+                               "Update feed fetched successfully (HTTP {}).".format(feed["status"]),
+                               evidence=url))
+        try:
+            root = ET.fromstring(feed["body"])
+        except ET.ParseError as exc:
+            checks.append(cc.check(prefix + ".xml", cc.FAIL,
+                                   "Update feed is not well-formed XML: {}.".format(exc),
+                                   evidence=url))
+            continue
+
+        root_name = _xml_local(root.tag)
+        if server.get("type") == "collection" or root_name == "extensionset":
+            extensions = _xml_children(root, "extension")
+            checks.append(cc.check(prefix + ".collection",
+                                   cc.PASS if extensions else cc.FAIL,
+                                   "Collection feed contains {} extension reference(s).".format(len(extensions)),
+                                   evidence=url))
+            continue
+        if root_name != "updates":
+            checks.append(cc.check(prefix + ".root", cc.FAIL,
+                                   "Extension update feed root should be <updates>, got <{}>.".format(root_name),
+                                   evidence=url))
+            continue
+        updates = _xml_children(root, "update")
+        if not updates:
+            checks.append(cc.check(prefix + ".update", cc.FAIL,
+                                   "Extension update feed has no <update> entry.", evidence=url))
+            continue
+        update = updates[0]
+        feed_type = _xml_child_text(update, "type")
+        feed_element = _xml_child_text(update, "element")
+        feed_folder = _xml_child_text(update, "folder")
+        feed_client = _xml_child_text(update, "client")
+        feed_version = _xml_child_text(update, "version")
+
+        expected_type = identity["type"]
+        if expected_type and feed_type != expected_type:
+            checks.append(cc.check(prefix + ".identity.type", cc.FAIL,
+                                   "Update feed type '{}' does not match manifest type '{}'.".format(
+                                       feed_type, expected_type),
+                                   evidence=url))
+        else:
+            checks.append(cc.check(prefix + ".identity.type", cc.PASS,
+                                   "Update feed type matches manifest ({}).".format(feed_type or expected_type)))
+        expected_element = identity["element"]
+        if expected_element and feed_element != expected_element:
+            checks.append(cc.check(prefix + ".identity.element", cc.FAIL,
+                                   "Update feed element '{}' does not match installed element '{}'.".format(
+                                       feed_element, expected_element),
+                                   evidence=url))
+        elif expected_element:
+            checks.append(cc.check(prefix + ".identity.element", cc.PASS,
+                                   "Update feed element matches installed element ({}).".format(feed_element)))
+
+        if expected_type == "plugin":
+            if identity["folder"] and feed_folder != identity["folder"]:
+                checks.append(cc.check(prefix + ".identity.folder", cc.FAIL,
+                                       "Plugin update feed folder '{}' does not match group '{}'.".format(
+                                           feed_folder, identity["folder"]),
+                                       evidence=url))
+            else:
+                checks.append(cc.check(prefix + ".identity.folder", cc.PASS,
+                                       "Plugin folder is present ({}).".format(feed_folder)))
+            if not feed_client:
+                checks.append(cc.check(prefix + ".identity.client", cc.FAIL,
+                                       "Plugin update feed is missing <client>site</client>; Joomla may not match it.",
+                                       evidence=url))
+            elif feed_client != identity["client"]:
+                checks.append(cc.check(prefix + ".identity.client", cc.FAIL,
+                                       "Plugin update feed client '{}' does not match installed client '{}'.".format(
+                                           feed_client, identity["client"]),
+                                       evidence=url))
+            else:
+                checks.append(cc.check(prefix + ".identity.client", cc.PASS,
+                                       "Plugin client matches installed client ({}).".format(feed_client)))
+
+        manifest_version = manifest.get("version") or ""
+        if not feed_version:
+            checks.append(cc.check(prefix + ".version", cc.FAIL,
+                                   "Update feed version is missing.", evidence=url))
+        elif manifest_version and _version_key(feed_version) < _version_key(manifest_version):
+            checks.append(cc.check(prefix + ".version", cc.FAIL,
+                                   "Update feed version {} is lower than packaged version {}; live feed is stale.".format(
+                                       feed_version, manifest_version),
+                                   evidence=url))
+        else:
+            detail = "Update feed version: {}.".format(feed_version)
+            if manifest_version and feed_version != manifest_version:
+                detail += " Packaged version is {}; feed offers a newer update.".format(manifest_version)
+            checks.append(cc.check(prefix + ".version", cc.PASS, detail))
+
+        downloads = []
+        for downloads_el in _xml_children(update, "downloads"):
+            for dl in _xml_children(downloads_el, "downloadurl"):
+                text = dl.text or ""
+                downloads.append((text.strip(), text))
+        if not downloads:
+            checks.append(cc.check(prefix + ".downloadurl", cc.FAIL,
+                                   "Update feed has no <downloads><downloadurl>.", evidence=url))
+            continue
+        dl_url, raw_dl_url = downloads[0]
+        if raw_dl_url != dl_url:
+            checks.append(cc.check(prefix + ".downloadurl.whitespace", cc.FAIL,
+                                   "downloadurl contains surrounding whitespace/newlines; Joomla can treat this as malformed.",
+                                   evidence=raw_dl_url))
+        if not _is_http_url(dl_url):
+            checks.append(cc.check(prefix + ".downloadurl", cc.FAIL,
+                                   "downloadurl is not an http(s) URL.", evidence=dl_url))
+            continue
+        dlid = any(_xml_local(child.tag) == "dlid" for child in list(update))
+        probe = _http_probe(dl_url, timeout=timeout)
+        if probe["ok"]:
+            checks.append(cc.check(prefix + ".download", cc.PASS,
+                                   "Update package URL is reachable (HTTP {}).".format(probe["status"]),
+                                   evidence=dl_url))
+        elif probe["status"] in (401, 403) and dlid and _looks_like_license_gateway(dl_url):
+            checks.append(cc.check(prefix + ".download", cc.PASS,
+                                   "Licensed download gateway rejects unauthenticated probes as expected (HTTP {}).".format(
+                                       probe["status"]),
+                                   evidence=dl_url))
+        elif probe["status"] in (401, 403) and _is_direct_zip_url(dl_url):
+            checks.append(cc.check(prefix + ".download", cc.FAIL,
+                                   "Update feed points directly to a zip that is HTTP {}; Joomla cannot download it.".format(
+                                       probe["status"]),
+                                   evidence=dl_url))
+        else:
+            detail = "Update package probe failed"
+            if probe["status"]:
+                detail += " with HTTP {}".format(probe["status"])
+            elif probe["error"]:
+                detail += ": {}".format(probe["error"])
+            checks.append(cc.check(prefix + ".download", cc.FAIL, detail + ".", evidence=dl_url))
+    return checks
 
 
 # --- file presence abstraction (works for source tree and zip) -------------
@@ -177,6 +494,9 @@ def _joomla_integrity(ctx):
             checks.append(cc.check("manifest." + field, cc.FAIL,
                                    "Manifest <{}> is empty or missing.".format(field)))
 
+    manifest_text = _read_rel_text(ctx, manifest.get("path", ""))
+    checks.extend(_joomla_update_feed_checks(ctx, manifest, manifest_text))
+
     # File cross-check (needs an unpacked tree or a .zip).
     if not _has_file_index(ctx):
         checks.append(cc.check("files.crosscheck", cc.SKIP,
@@ -194,7 +514,7 @@ def _joomla_integrity(ctx):
 
     _append_suspicious_content_check(
         checks, "manifest.untrusted_content",
-        _read_rel_text(ctx, manifest.get("path", "")), "manifest"
+        manifest_text, "manifest"
     )
 
     unsafe = sorted({p for p in declared + declared_folders if _unsafe_relpath(p)})
