@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -47,6 +48,7 @@ def _check_from_run(name, result, detail):
 
 
 def build_commands(out_dir, include_unit=True):
+    package_out = os.path.join(tempfile.gettempdir(), "cmsct-self-test-package")
     commands = [
         ("self.compileall", [sys.executable, "-m", "compileall", "scripts", "tests"],
          "Python files compile cleanly."),
@@ -63,7 +65,7 @@ def build_commands(out_dir, include_unit=True):
         ], "CLI logic/usability smoke passes."),
         ("self.package", [
             sys.executable, os.path.join("scripts", "package_skill.py"),
-            "--out-dir", os.path.join(out_dir, "package"),
+            "--out-dir", package_out,
             "--include-tests",
             "--json",
         ], "Clean package can be built."),
