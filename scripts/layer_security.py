@@ -132,44 +132,106 @@ def _joomla_checks(blob):
     if not blob:
         return checks
     token_ok = _has_any(blob, ("Session::checkToken", "JSession::checkToken", "checkToken("))
-    request_mutators = _evidence(r"(task=|->input->get|Factory::getApplication\(\)->input|getApplication\(\)->input)", blob)
-    if request_mutators and not token_ok:
+    # CSRF is only a risk where request input drives a STATE CHANGE. Reading
+    # $input to render a view/list is not a CSRF concern, so require a write op
+    # (DB write or a writing controller task) alongside the input read.
+    reads_input = _has_any(blob, ("->input->get", "getApplication()->input",
+                                  "->getInput(", "$_POST", "$_REQUEST"))
+    write_op = _evidence(
+        r"(->\s*(save|delete|store|remove|publish|batch)\s*\(|insertObject|updateObject"
+        r"|task\s*=\s*[\"']?(save|apply|remove|delete|publish|store|unpublish))", blob)
+    if write_op and reads_input and not token_ok:
         checks.append(cc.check("security.joomla.csrf", cc.WARN,
-                               "Joomla request/task handling detected but no obvious Session::checkToken guard was found.",
-                               evidence=request_mutators[:5]))
-    elif request_mutators:
-        checks.append(cc.check("security.joomla.csrf", cc.PASS, "Joomla token guard found near request/task surface."))
-    acl_ok = _has_any(blob, ("authorise(", "getAuthorised", "Access::check", "core."))
-    admin_surface = _evidence(r"(administrator|Controller|Toolbar|task\.)", blob)
-    if admin_surface and not acl_ok:
+                               "State-changing Joomla request handling without an obvious Session::checkToken guard.",
+                               evidence=write_op[:5]))
+    elif write_op and reads_input:
+        checks.append(cc.check("security.joomla.csrf", cc.PASS,
+                               "Joomla token guard found near a state-changing surface."))
+    # ACL is only required for an admin controller WRITE action; display-only
+    # controllers and non-controller (system/content) plugins do not need it.
+    acl_ok = _has_any(blob, ("authorise(", "getAuthorised", "Access::check"))
+    admin_write = _evidence(
+        r"(public\s+function\s+(save|delete|apply|publish|unpublish|remove|batch|edit)\s*\("
+        r"|task\s*=\s*[\"']?(save|delete|apply|publish|unpublish|remove|batch))", blob)
+    if admin_write and not acl_ok:
         checks.append(cc.check("security.joomla.acl", cc.WARN,
-                               "Admin/controller surface detected but no obvious Joomla ACL authorise() check was found."))
+                               "Admin controller write action without an obvious Joomla ACL authorise() check.",
+                               evidence=admin_write[:5]))
+    elif admin_write:
+        checks.append(cc.check("security.joomla.acl", cc.PASS,
+                               "ACL authorise() found near an admin write action."))
     raw_sql = _evidence(r"(setQuery|query\()\s*\([^)]*(\$_(GET|POST|REQUEST)|->input->get)", blob)
     if raw_sql:
         checks.append(cc.check("security.joomla.sql.request_input", cc.FAIL,
                                "Joomla database query appears to consume request input directly; use query binding/sanitize.",
                                evidence=raw_sql))
-    uploads = _evidence(r"(\$_FILES|File::upload|InputFilter::isSafeFile)", blob)
-    if uploads and "isSafeFile" not in blob and "InputFilter" not in blob:
+    # Safe-upload validation can live in a helper (validate(), finfo MIME sniff,
+    # extension allowlist, is_uploaded_file) — not only InputFilter::isSafeFile.
+    uploads = _evidence(r"(\$_FILES|File::upload|move_uploaded_file)", blob)
+    safe_upload = _has_any(blob, ("isSafeFile", "InputFilter", "finfo", "mime_content_type",
+                                  "PATHINFO_EXTENSION", "File::makeSafe", "is_uploaded_file",
+                                  "->validate(", "checkExtension", "allowedExtensions"))
+    if uploads and not safe_upload:
         checks.append(cc.check("security.joomla.uploads", cc.WARN,
                                "Upload handling detected without obvious safe-file validation.",
                                evidence=uploads[:5]))
     return checks
 
 
+# Real secret VALUES (high-confidence, flagged in any file). Lengths are tuned
+# so short fabricated test stubs ("sk_test_secret", "whsec_codex_smoke") do NOT
+# match — only credential-shaped runs do.
+_SECRET_VALUE_PATTERNS = [
+    (r"sk-[A-Za-z0-9]{20,}", "OpenAI-style API key"),
+    (r"sk_live_[A-Za-z0-9]{16,}", "Stripe live secret key"),
+    (r"sk_test_[A-Za-z0-9]{20,}", "Stripe test secret key"),
+    (r"rk_live_[A-Za-z0-9]{16,}", "Stripe restricted key"),
+    (r"whsec_[A-Za-z0-9]{24,}", "Stripe webhook secret"),
+    (r"AIza[0-9A-Za-z_\-]{30,}", "Google API key"),
+    (r"ghp_[A-Za-z0-9]{30,}", "GitHub token"),
+    (r"xox[baprs]-[A-Za-z0-9-]{20,}", "Slack token"),
+    (r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----", "private key block"),
+]
+
+# Generic "name = literal" fallback. Deliberately strict to avoid the classic
+# false positives: it ignores publishable keys (pk_/pub), placeholders, values
+# that contain whitespace (labels/sentences), and PHP/template interpolation
+# ($, <?, {{ ) — i.e. it only fires on a secret-SHAPED literal assigned to a
+# secret-ish name.
+_SECRET_GENERIC = re.compile(
+    r"(?i)(?:api[_-]?key|client[_-]?secret|app[_-]?secret|secret[_-]?key|password|passwd|"
+    r"auth[_-]?token|access[_-]?token|private[_-]?key)\s*[:=>]{1,2}\s*"
+    r"['\"](?!pk_)(?!pub)(?![^'\"]*[\s$<{])[A-Za-z0-9_\-+/=]{24,}['\"]"
+)
+
+
+def _skip_secret_file(rel):
+    """Files that legitimately carry secret-SHAPED text that is not a leak:
+    translations/readmes (labels), and security TEST FIXTURES that embed fake
+    keys on purpose to exercise a redactor."""
+    low = rel.lower().replace("\\", "/")
+    if low.endswith((".ini", ".po", ".mo", ".md", ".txt", ".pot")):
+        return True
+    if "/language/" in low or "/languages/" in low or low.rsplit("/", 1)[-1].startswith("readme"):
+        return True
+    if "redaction" in low or "leaksentinel" in low or "secret-redaction" in low:
+        return True
+    return False
+
+
 def _generic_checks(ctx):
     checks = []
     secret_hits = []
-    patterns = [
-        (r"sk-[A-Za-z0-9_-]{20,}", "OpenAI-style API key"),
-        (r"AIza[0-9A-Za-z_-]{20,}", "Google API key"),
-        (r"(?i)(api[_-]?key|secret|token)\s*[:=]\s*['\"][^'\"]{12,}['\"]", "hardcoded secret-like assignment"),
-    ]
     for rel, text in _iter_files(ctx):
-        for pattern, label in patterns:
-            if re.search(pattern, text):
-                secret_hits.append("{}: {}".format(rel, label))
+        label = None
+        for pat, lbl in _SECRET_VALUE_PATTERNS:
+            if re.search(pat, text):
+                label = lbl
                 break
+        if label is None and not _skip_secret_file(rel) and _SECRET_GENERIC.search(text):
+            label = "hardcoded secret-like literal"
+        if label:
+            secret_hits.append("{}: {}".format(rel, label))
     if secret_hits:
         checks.append(cc.check("security.hardcoded_secrets", cc.FAIL,
                                "Secret-like literals detected in source files.", evidence=secret_hits[:20]))
