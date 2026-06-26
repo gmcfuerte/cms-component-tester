@@ -27,6 +27,18 @@ import re
 import sys
 from urllib.parse import urlsplit
 
+# Windows terminals/pipes default to a legacy code page (cp1252) that cannot
+# encode the status glyphs this tool emits (the pass/fail/warn icons). Force
+# UTF-8 on stdout/stderr where the stream supports it, degrading gracefully
+# instead of crashing with UnicodeEncodeError. (Setting PYTHONUTF8=1 also fixes
+# this, but callers should not have to.)
+for _std_name in ("stdout", "stderr"):
+    _std = getattr(sys, _std_name, None)
+    try:
+        _std.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 # --- Status vocabulary -----------------------------------------------------
 
 PASS = "pass"
